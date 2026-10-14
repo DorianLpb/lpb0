@@ -2,10 +2,10 @@
   "name": "Lpb",
   "version": "1.0.0",
   "description": "Bot de Discord con comandos slash y prefijo",
-  "main": "index.js",
+  "main": "bot2.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node index.js"
+    "start": "node bot2.js"
   },
   "engines": {
     "node": ">=18.0.0"
