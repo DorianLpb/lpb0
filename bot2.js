@@ -1,11 +1,3 @@
-// ============================================================
-// BOT 2 - Solo hace una cosa: entrar a un canal de voz y quedarse.
-// Sin prefijo, sin otros comandos. Único comando: /voice-join
-//
-// Variables de entorno en Railway:
-//   TOKEN             -> token del segundo bot
-//   VOICE_CHANNEL_ID  -> (opcional) ID del canal al que entra solo al arrancar
-// ============================================================
 
 const {
   Client,
@@ -30,34 +22,49 @@ const client = new Client({
   ]
 });
 
-// ---------- Comando slash (el único) ----------
+// ---------- COMANDOS ----------
 const slashCommands = [
   new SlashCommandBuilder()
     .setName("voice-join")
-    .setDescription("El bot se une a un canal de voz y se queda (administrador)")
+    .setDescription("Entrar o salir de un canal de voz")
     .addChannelOption(opt =>
       opt.setName("canal")
-        .setDescription("Canal de voz al que unirse")
+        .setDescription("Canal de voz")
         .addChannelTypes(ChannelType.GuildVoice, ChannelType.GuildStageVoice)
         .setRequired(false)
     )
     .addBooleanOption(opt =>
       opt.setName("stop")
-        .setDescription("true para sacar al bot del canal de voz")
+        .setDescription("Salir del canal de voz")
         .setRequired(false)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName("bot")
+    .setDescription("Comandos del bot")
+    .addSubcommand(sub =>
+      sub.setName("say")
+        .setDescription("Enviar un mensaje como el bot")
+        .addStringOption(opt =>
+          opt.setName("mensaje")
+            .setDescription("Mensaje que enviará el bot")
+            .setRequired(true)
+            .setMaxLength(2000)
+        )
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 ];
 
-// ---------- Lógica de voz: entrar, quedarse y reconectar ----------
+// ---------- SISTEMA DE VOZ ----------
 let activeConnection = null;
 let targetChannelId = null;
 
 async function joinVoicePersistent(channel) {
   if (!channel) return null;
+
   targetChannelId = channel.id;
 
-  // Cerrar la conexión anterior sin que dispare la reconexión automática
   if (activeConnection) {
     const old = activeConnection;
     activeConnection = null;
@@ -71,27 +78,26 @@ async function joinVoicePersistent(channel) {
     selfDeaf: true,
     selfMute: true
   });
-  activeConnection = connection;
-  console.log(`Conectado al canal de voz: ${channel.name} (${channel.guild.name})`);
 
-  // Si se desconecta, esperar a ver si Discord lo reconecta solo;
-  // si no, destruir la conexión para que se vuelva a crear.
+  activeConnection = connection;
+
+  console.log(`Conectado al canal: ${channel.name}`);
+
   connection.on(VoiceConnectionStatus.Disconnected, async () => {
     try {
       await Promise.race([
-        entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
-        entersState(connection, VoiceConnectionStatus.Connecting, 5_000)
+        entersState(connection, VoiceConnectionStatus.Signalling, 5000),
+        entersState(connection, VoiceConnectionStatus.Connecting, 5000)
       ]);
     } catch (e) {
       try { connection.destroy(); } catch (err) {}
     }
   });
 
-  // Si la conexión se destruyó sin que tú lo pidieras, volver a entrar
   connection.on(VoiceConnectionStatus.Destroyed, () => {
     if (connection !== activeConnection) return;
     activeConnection = null;
-    if (targetChannelId) setTimeout(rejoin, 5_000);
+    if (targetChannelId) setTimeout(rejoin, 5000);
   });
 
   return connection;
@@ -99,18 +105,20 @@ async function joinVoicePersistent(channel) {
 
 async function rejoin() {
   if (!targetChannelId || activeConnection) return;
+
   const ch = await client.channels.fetch(targetChannelId).catch(() => null);
+
   if (ch && ch.isVoiceBased()) {
-    console.log("Reconectando al canal de voz...");
+    console.log("Reconectando al canal...");
     joinVoicePersistent(ch);
   } else {
-    // No se pudo obtener el canal (puede ser un fallo de red): reintentar luego
-    setTimeout(rejoin, 30_000);
+    setTimeout(rejoin, 30000);
   }
 }
 
 async function leaveVoice() {
   targetChannelId = null;
+
   if (activeConnection) {
     const old = activeConnection;
     activeConnection = null;
@@ -118,52 +126,94 @@ async function leaveVoice() {
   }
 }
 
-// ---------- Arranque ----------
+// ---------- ARRANQUE ----------
 client.once("ready", async () => {
   console.log(`Bot listo como ${client.user.tag}`);
 
   try {
     await client.application.commands.set(slashCommands);
-    console.log("Comando /voice-join registrado.");
+    console.log("Comandos registrados correctamente.");
   } catch (e) {
-    console.error("Error registrando comandos slash:", e);
+    console.error("Error registrando comandos:", e);
   }
 
-  // Entrar solo al canal indicado en VOICE_CHANNEL_ID
   const id = process.env.VOICE_CHANNEL_ID;
+
   if (id) {
     const ch = await client.channels.fetch(id).catch(() => null);
-    if (ch && ch.isVoiceBased()) await joinVoicePersistent(ch);
-    else console.error("VOICE_CHANNEL_ID no es un canal de voz valido.");
+
+    if (ch && ch.isVoiceBased()) {
+      await joinVoicePersistent(ch);
+    } else {
+      console.error("VOICE_CHANNEL_ID no es válido.");
+    }
   }
 });
 
-// ---------- Handler del comando ----------
+// ---------- INTERACCIONES ----------
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName !== "voice-join") return;
 
-  await interaction.deferReply();
+  // COMANDO /BOT SAY
+  if (interaction.commandName === "bot") {
+    if (interaction.options.getSubcommand() === "say") {
+      const mensaje = interaction.options.getString("mensaje");
 
-  const stop = interaction.options.getBoolean("stop");
-  if (stop) {
-    await leaveVoice();
-    return interaction.editReply({ content: "Sali del canal de voz." });
+      await interaction.deferReply({ ephemeral: true });
+
+      try {
+        await interaction.channel.send({
+          content: mensaje,
+          allowedMentions: { parse: [] }
+        });
+
+        return interaction.editReply("Mensaje enviado correctamente.");
+      } catch (error) {
+        console.error("Error enviando mensaje:", error);
+        return interaction.editReply("No pude enviar el mensaje. Revisa mis permisos.");
+      }
+    }
   }
 
-  let channel = interaction.options.getChannel("canal");
-  if (!channel && interaction.member?.voice?.channel) channel = interaction.member.voice.channel;
-  if (!channel || (channel.type !== ChannelType.GuildVoice && channel.type !== ChannelType.GuildStageVoice)) {
-    return interaction.editReply({ content: "Menciona un canal de voz o unete a uno primero." });
-  }
+  // COMANDO /VOICE-JOIN
+  if (interaction.commandName === "voice-join") {
+    await interaction.deferReply();
 
-  await joinVoicePersistent(channel);
-  return interaction.editReply({
-    content: `Conectado a **${channel.name}**. Me quedare hasta que uses /voice-join stop: true.`
-  });
+    const stop = interaction.options.getBoolean("stop");
+
+    if (stop) {
+      await leaveVoice();
+      return interaction.editReply("Salí del canal de voz.");
+    }
+
+    let channel = interaction.options.getChannel("canal");
+
+    if (!channel && interaction.member?.voice?.channel) {
+      channel = interaction.member.voice.channel;
+    }
+
+    if (!channel ||
+      (channel.type !== ChannelType.GuildVoice &&
+       channel.type !== ChannelType.GuildStageVoice)) {
+      return interaction.editReply(
+        "Menciona un canal de voz o únete a uno primero."
+      );
+    }
+
+    await joinVoicePersistent(channel);
+
+    return interaction.editReply(
+      `Conectado a **${channel.name}**. Me quedaré hasta que uses /voice-join stop: true.`
+    );
+  }
 });
 
-process.on("unhandledRejection", err => console.error("unhandledRejection:", err));
-process.on("uncaughtException", err => console.error("uncaughtException:", err));
+process.on("unhandledRejection", err =>
+  console.error("unhandledRejection:", err)
+);
+
+process.on("uncaughtException", err =>
+  console.error("uncaughtException:", err)
+);
 
 client.login(TOKEN);
