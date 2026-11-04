@@ -45,12 +45,17 @@ const slashCommands = [
     .setDescription("Comandos del bot")
     .addSubcommand(sub =>
       sub.setName("say")
-        .setDescription("Enviar un mensaje como el bot")
+        .setDescription("Enviar mensajes e imágenes")
         .addStringOption(opt =>
           opt.setName("mensaje")
-            .setDescription("Mensaje que enviará el bot")
-            .setRequired(true)
+            .setDescription("Texto que enviará el bot (opcional)")
+            .setRequired(false)
             .setMaxLength(2000)
+        )
+        .addAttachmentOption(opt =>
+          opt.setName("imagen")
+            .setDescription("Imagen que enviará el bot (opcional)")
+            .setRequired(false)
         )
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -154,28 +159,46 @@ client.once("ready", async () => {
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  // COMANDO /BOT SAY
+  // /BOT SAY
   if (interaction.commandName === "bot") {
     if (interaction.options.getSubcommand() === "say") {
       const mensaje = interaction.options.getString("mensaje");
+      const imagen = interaction.options.getAttachment("imagen");
+
+      if (!mensaje && !imagen) {
+        return interaction.reply({
+          content: "Debes proporcionar un mensaje, una imagen o ambos.",
+          ephemeral: true
+        });
+      }
+
+      if (imagen && !imagen.contentType?.startsWith("image/")) {
+        return interaction.reply({
+          content: "El archivo adjunto debe ser una imagen.",
+          ephemeral: true
+        });
+      }
 
       await interaction.deferReply({ ephemeral: true });
 
       try {
         await interaction.channel.send({
-          content: mensaje,
+          content: mensaje || undefined,
+          files: imagen ? [imagen.url] : [],
           allowedMentions: { parse: [] }
         });
 
-        return interaction.editReply("Mensaje enviado correctamente.");
+        return interaction.editReply("¡Mensaje enviado correctamente!");
       } catch (error) {
         console.error("Error enviando mensaje:", error);
-        return interaction.editReply("No pude enviar el mensaje. Revisa mis permisos.");
+        return interaction.editReply(
+          "No pude enviar el contenido. Revisa mis permisos."
+        );
       }
     }
   }
 
-  // COMANDO /VOICE-JOIN
+  // /VOICE-JOIN
   if (interaction.commandName === "voice-join") {
     await interaction.deferReply();
 
